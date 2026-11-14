@@ -326,24 +326,60 @@ const MATCHMAKING_CONFIG = {
     });
     $("settingsBack").addEventListener("click", showPauseMenu);
     $("settingsResume").addEventListener("click", togglePause);
-  }
-  function showMainMenu() {
-    cleanupOnline();
-    stopMusic(true);
-    cancelAnimationFrame(animationId);
-    running = false; paused = false; gameOver = false;
-    heldInputs.clear(); activeKeys.clear();
-    if (inputFrame) cancelAnimationFrame(inputFrame);
-    inputFrame = 0; lastInputTime = 0;
-    $("pauseButton").disabled = true;
-    $("pauseButton").innerHTML = "Ⅱ <span>PAUSE</span>";
-    setOverlay("Make your move.", "READY WHEN YOU ARE", "Clear lines and build your best run.", [
-      { label: "Start game", action: startGame },
+  
+function showMainMenu() {
+  cleanupOnline();
+  stopMusic(true);
+  cancelAnimationFrame(animationId);
+  running = false;
+  paused = false;
+  gameOver = false;
+  heldInputs.clear();
+  activeKeys.clear();
+
+  if (inputFrame) cancelAnimationFrame(inputFrame);
+  inputFrame = 0;
+  lastInputTime = 0;
+
+  $("pauseButton").disabled = true;
+  $("pauseButton").innerHTML = "Ⅱ <span>PAUSE</span>";
+
+  setOverlay("Make your move.", "READY WHEN YOU ARE",
+    "Clear lines and build your best run.", [
+      { label: "Start game", action: showGameModeMenu },
       { label: "How to play", action: showMainHowToPlay },
       { label: "Settings", action: showSettingsFromMenu }
     ]);
-    overlay.classList.remove("hidden");
-  }
+
+  overlay.classList.remove("hidden");
+}
+
+function showGameModeMenu() {
+  setOverlay("Choose your mode.", "GAME MODE",
+    "How would you like to play TETRA NOVA?", [
+      {
+        label: "Single Player",
+        action: startGame
+      },
+      {
+        label: "Multiplayer",
+        action: () => {
+          overlay.classList.add("hidden");
+          $("onlinePanel").hidden = false;
+          $("onlinePanel").scrollIntoView({
+            behavior: "smooth",
+            block: "center"
+          });
+        }
+      },
+      {
+        label: "Back",
+        action: showMainMenu
+      }
+    ]);
+
+  overlay.classList.remove("hidden");
+}
   function showMainHowToPlay() {
     const details = `<h3>How to play</h3>
       <p><b>← / →</b> Move · <b>↑</b> Rotate</p>
