@@ -23,7 +23,8 @@
   let leaderboard = loadScores();
   let peer = null, onlineConnection = null, onlineRole = null, onlineMatch = false;
   let remoteGameOver = false, lastNetworkUpdate = 0, onlineStarting = false;
-  let playType="endless", botDifficulty="medium", botBoard=null, botPiece=null, botScore=0, botLines=0, botTickAt=0, botSpeed=620, botGarbageSent=0, playerGarbageReceived=0;
+  let playType="endless", botDifficulty="medium", botBoard=null, botPiece=null, botScore=0, botLines=0, botTickAt=0, botSpeed=720, botGarbageSent=0, playerGarbageReceived=0;
+  let botTarget=null, botActionAt=0, botFallAt=0, botThinkDelay=0;
   let matchmakingChannel = null, matchmakingSession = null, matchmakingActive = false, matchmakingAttempt = "";
   // Add your Supabase project URL and anon/publishable key here to enable Find Match.
   const MATCHMAKING_CONFIG = {
@@ -376,7 +377,7 @@
     ]); overlay.classList.remove("hidden");
   }
   function showBotDifficultyMenu() {
-    setOverlay("Choose difficulty.", "BOT MATCH", "The bot's speed and stacking skill increase with difficulty.", [
+    setOverlay("Choose difficulty.", "BOT MATCH", "Each bot moves naturally, with different thinking speed and stacking skill.", [
       {label:"Easy",action:()=>startBotMatch("easy")},
       {label:"Medium",action:()=>startBotMatch("medium")},
       {label:"Hard",action:()=>startBotMatch("hard")},
@@ -385,10 +386,12 @@
   }
   function startBotMatch(levelName) {
     playType="bot"; botDifficulty=levelName;
-    botSpeed=levelName==="easy"?900:levelName==="medium"?520:300;
+    botSpeed=levelName==="easy"?900:levelName==="medium"?720:580;
+    botTarget=null; botActionAt=0; botFallAt=0;
+    botThinkDelay=levelName==="easy"?420:levelName==="medium"?260:150;
     botGarbageSent=0; playerGarbageReceived=0;
     startGame();
-    botBoard=Array.from({length:ROWS},()=>Array(COLS).fill(null)); botPiece=null; botScore=0; botLines=0; botTickAt=0;
+    botBoard=Array.from({length:ROWS},()=>Array(COLS).fill(null)); botPiece=null; botScore=0; botLines=0; botTickAt=0; botTarget=null; botActionAt=0; botFallAt=0;
     const opponent=$("opponentCard"); opponent.hidden=false;
     const arena=$("battleArena"); if(opponent.parentElement!==arena){opponent.classList.add("battle-player","opponent-battle-player");arena.appendChild(opponent);}
     $("game-layout")?.classList.add("online-battle");
@@ -413,7 +416,11 @@
     const keys=Object.keys(SHAPES),type=keys[Math.floor(Math.random()*keys.length)];
     const matrix=SHAPES[type].map(r=>r.slice());
     botPiece={type,matrix,x:Math.floor(COLS/2)-Math.ceil(matrix[0].length/2),y:0};
-    if(botCollides(matrix,botPiece.x,0)){botPiece=null;botGameWon();}
+    if(botCollides(matrix,botPiece.x,0)){botPiece=null;botGameWon();return;}
+    botTarget=chooseBotPlacement();
+    const now=performance.now();
+    botActionAt=now+botThinkDelay;
+    botFallAt=now+botSpeed;
   }
   function addGarbageRows(grid,count) {
     let overflow=false;
@@ -487,12 +494,8 @@
     // Hard consistently chooses the best board outcome and gets a faster turn cadence.
     return options[0];
   }
-  function botStep(){
+  function botLockPiece(){
     if(!botPiece)return;
-    const choice=chooseBotPlacement();
-    if(!choice){botPiece=null;botGameWon();return;}
-    botPiece.matrix=choice.matrix.map(row=>row.slice());
-    botPiece.x=choice.x;botPiece.y=choice.y;
     botPiece.matrix.forEach((row,r)=>row.forEach((v,c)=>{
       if(v)botBoard[botPiece.y+r][botPiece.x+c]=botPiece.type;
     }));
@@ -508,8 +511,46 @@
       draw();
       if(overflow){endGame();return;}
     }
+    botPiece=null; botTarget=null;
     spawnBotPiece();
     renderBot();
+  }
+  function botTick(now){
+    if(!botPiece)return;
+    if(!botTarget)botTarget=chooseBotPlacement();
+    if(!botTarget){botGameWon();return;}
+    const actionDelay=botDifficulty==="easy"?205:botDifficulty==="medium"?145:105;
+    if(now>=botActionAt){
+      const same=JSON.stringify(botPiece.matrix)===JSON.stringify(botTarget.matrix);
+      if(!same){
+        const rotated=rotateBotMatrix(botPiece.matrix);
+        const kicks=[0,-1,1,-2,2];
+        let moved=false;
+        for(const kick of kicks){
+          if(!botCollides(rotated,botPiece.x+kick,botPiece.y)){
+            botPiece.matrix=rotated;botPiece.x+=kick;moved=true;break;
+          }
+        }
+        if(!moved){botTarget={...botTarget,matrix:botPiece.matrix.map(r=>r.slice()),x:Math.max(0,Math.min(COLS-botPiece.matrix[0].length,botTarget.x))};}
+      } else if(botPiece.x!==botTarget.x){
+        const direction=Math.sign(botTarget.x-botPiece.x);
+        if(!botCollides(botPiece.matrix,botPiece.x+direction,botPiece.y))botPiece.x+=direction;
+      }
+      botActionAt=now+actionDelay;
+      renderBot();
+    }
+    if(now>=botFallAt){
+      const aligned=botPiece.x===botTarget.x && JSON.stringify(botPiece.matrix)===JSON.stringify(botTarget.matrix);
+      if(aligned && botPiece.y>=botTarget.y){
+        botLockPiece();
+      } else if(!botCollides(botPiece.matrix,botPiece.x,botPiece.y+1)){
+        botPiece.y++;
+      } else {
+        botLockPiece();
+      }
+      botFallAt=now+botSpeed;
+      renderBot();
+    }
   }
   function renderBot(){if(!botBoard)return;renderOpponent({board:botBoard,current:botPiece,score:botScore,lines:botLines,alive:!!botPiece});}
 
@@ -628,7 +669,7 @@
     const delta=lastTime ? time-lastTime : 0; lastTime=time; dropCounter+=delta;
     const interval=Math.max(75, 850-(level-1)*65-(mode==="modern"?70:0));
     if (dropCounter>interval) { move(0,1); dropCounter=0; }
-    if(playType==="bot" && time-botTickAt>botSpeed){botTickAt=time;botStep();renderBot();}
+    if(playType==="bot")botTick(time);
     draw();
     // Live board updates are broadcast from draw() so keyboard/touch moves and
     // gravity drops both publish immediately, not only on the timed game loop.
