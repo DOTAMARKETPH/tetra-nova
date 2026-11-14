@@ -23,7 +23,7 @@
   let leaderboard = loadScores();
   let peer = null, onlineConnection = null, onlineRole = null, onlineMatch = false;
   let remoteGameOver = false, lastNetworkUpdate = 0, onlineStarting = false;
-  let playType="endless", botDifficulty="medium", botBoard=null, botPiece=null, botScore=0, botLines=0, botTickAt=0, botSpeed=620;
+  let playType="endless", botDifficulty="medium", botBoard=null, botPiece=null, botScore=0, botLines=0, botTickAt=0, botSpeed=620, botGarbageSent=0, playerGarbageReceived=0;
   let matchmakingChannel = null, matchmakingSession = null, matchmakingActive = false, matchmakingAttempt = "";
   // Add your Supabase project URL and anon/publishable key here to enable Find Match.
   const MATCHMAKING_CONFIG = {
@@ -252,7 +252,17 @@
       }
     }
     if (!cleared) return;
-    if (onlineMatch && onlineConnection && cleared >= 2) sendOnline({ type:"garbage", rows:cleared===2?1:cleared===3?2:4 });
+    if (cleared >= 2) {
+      const attackRows = cleared===2?1:cleared===3?2:4;
+      if (onlineMatch && onlineConnection) sendOnline({ type:"garbage", rows:attackRows });
+      else if (playType==="bot" && botBoard) {
+        const overflow=addGarbageRows(botBoard, attackRows);
+        botGarbageSent += attackRows;
+        if (overflow) { botGameWon(); return; }
+        renderBot();
+        sound(125,.12,"sawtooth",.045);
+      }
+    }
     lines += cleared;
     const classicPoints=[0,100,300,500,800];
     const modernPoints=[0,120,360,600,1000];
@@ -375,7 +385,8 @@
   }
   function startBotMatch(levelName) {
     playType="bot"; botDifficulty=levelName;
-    botSpeed=levelName==="easy"?850:levelName==="medium"?560:340;
+    botSpeed=levelName==="easy"?900:levelName==="medium"?520:300;
+    botGarbageSent=0; playerGarbageReceived=0;
     startGame();
     botBoard=Array.from({length:ROWS},()=>Array(COLS).fill(null)); botPiece=null; botScore=0; botLines=0; botTickAt=0;
     const opponent=$("opponentCard"); opponent.hidden=false;
@@ -386,24 +397,122 @@
     $("opponentCard").querySelector(".panel-heading span").textContent="NOVA BOT";
     spawnBotPiece(); renderBot();
   }
-  function botCollides(m,x,y) {
-    for(let r=0;r<m.length;r++)for(let c=0;c<m[r].length;c++)if(m[r][c]){const xx=x+c,yy=y+r;if(xx<0||xx>=COLS||yy>=ROWS||(yy>=0&&botBoard[yy][xx]))return true;}
+  function botCollides(m,x,y,grid=botBoard) {
+    for(let r=0;r<m.length;r++)for(let c=0;c<m[r].length;c++)if(m[r][c]){
+      const xx=x+c,yy=y+r;
+      if(xx<0||xx>=COLS||yy>=ROWS||(yy>=0&&grid[yy][xx]))return true;
+    }
     return false;
   }
-  function spawnBotPiece(){const keys=Object.keys(SHAPES),type=keys[Math.floor(Math.random()*keys.length)],matrix=SHAPES[type].map(r=>r.slice());botPiece={type,matrix,x:Math.floor(COLS/2)-Math.ceil(matrix[0].length/2),y:0};if(botCollides(matrix,botPiece.x,0)){botPiece=null;botGameWon();}}
+  function rotateBotMatrix(matrix) {
+    const h=matrix.length,w=matrix[0].length,out=Array.from({length:w},()=>Array(h).fill(0));
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++)out[x][h-1-y]=matrix[y][x];
+    return out;
+  }
+  function spawnBotPiece(){
+    const keys=Object.keys(SHAPES),type=keys[Math.floor(Math.random()*keys.length)];
+    const matrix=SHAPES[type].map(r=>r.slice());
+    botPiece={type,matrix,x:Math.floor(COLS/2)-Math.ceil(matrix[0].length/2),y:0};
+    if(botCollides(matrix,botPiece.x,0)){botPiece=null;botGameWon();}
+  }
+  function addGarbageRows(grid,count) {
+    let overflow=false;
+    for(let i=0;i<count;i++){
+      if(grid[0].some(Boolean))overflow=true;
+      grid.shift();
+      const hole=Math.floor(Math.random()*COLS);
+      grid.push(Array.from({length:COLS},(_,x)=>x===hole?null:"Z"));
+    }
+    return overflow;
+  }
+  function evaluateBotBoard(grid,cleared) {
+    const heights=[],holesByColumn=[];
+    let aggregate=0,holes=0,bumpiness=0,maxHeight=0;
+    for(let x=0;x<COLS;x++){
+      let height=0,found=false,columnHoles=0;
+      for(let y=0;y<ROWS;y++){
+        if(grid[y][x]){
+          if(!found){height=ROWS-y;found=true;}
+        } else if(found) columnHoles++;
+      }
+      heights.push(height); holesByColumn.push(columnHoles);
+      aggregate+=height;holes+=columnHoles;maxHeight=Math.max(maxHeight,height);
+    }
+    for(let x=0;x<COLS-1;x++)bumpiness+=Math.abs(heights[x]-heights[x+1]);
+    let wells=0;
+    for(let x=0;x<COLS;x++){
+      const left=x===0?ROWS:heights[x-1],right=x===COLS-1?ROWS:heights[x+1];
+      wells+=Math.max(0,Math.min(left,right)-heights[x]);
+    }
+    const weights=botDifficulty==="hard"
+      ? {lines:5.8,holes:9.5,height:1.05,aggregate:.48,bump:.72,wells:.38}
+      : botDifficulty==="medium"
+      ? {lines:4.4,holes:7.4,height:.92,aggregate:.38,bump:.55,wells:.25}
+      : {lines:3.2,holes:5.2,height:.72,aggregate:.28,bump:.35,wells:.12};
+    return -cleared*weights.lines*10 - holes*weights.holes - maxHeight*weights.height
+      - aggregate*weights.aggregate - bumpiness*weights.bump - wells*weights.wells;
+  }
+  function chooseBotPlacement() {
+    const options=[];
+    let matrix=botPiece.matrix.map(row=>row.slice());
+    const rotations=[];
+    for(let r=0;r<4;r++){
+      if(!rotations.some(old=>JSON.stringify(old)===JSON.stringify(matrix)))rotations.push(matrix);
+      matrix=rotateBotMatrix(matrix);
+    }
+    for(const shape of rotations){
+      const width=shape[0].length;
+      for(let x=0;x<=COLS-width;x++){
+        let y=0;
+        while(!botCollides(shape,x,y+1))y++;
+        if(botCollides(shape,x,y))continue;
+        const test=botBoard.map(row=>row.slice());
+        shape.forEach((row,ry)=>row.forEach((v,c)=>{if(v)test[y+ry][x+c]=botPiece.type;}));
+        let cleared=0;
+        for(let yy=ROWS-1;yy>=0;yy--)if(test[yy].every(Boolean)){test.splice(yy,1);test.unshift(Array(COLS).fill(null));cleared++;yy++;}
+        options.push({matrix:shape,x,y,cleared,score:evaluateBotBoard(test,cleared)});
+      }
+    }
+    if(!options.length)return null;
+    options.sort((a,b)=>b.score-a.score);
+    if(botDifficulty==="easy"){
+      // Easy still makes sensible plays, but occasionally chooses a weaker placement.
+      const pool=options.slice(0,Math.min(7,options.length));
+      return pool[Math.floor(Math.random()*pool.length)];
+    }
+    if(botDifficulty==="medium"){
+      const pool=options.slice(0,Math.min(3,options.length));
+      return pool[Math.random()<.82?0:Math.floor(Math.random()*pool.length)];
+    }
+    // Hard consistently chooses the best board outcome and gets a faster turn cadence.
+    return options[0];
+  }
   function botStep(){
     if(!botPiece)return;
-    // The bot evaluates a few legal horizontal placements and prefers lower, flatter stacks.
-    if(Math.random()<(botDifficulty==="easy"?.35:botDifficulty==="medium"?.72:.94)){
-      const candidates=[];for(let x=0;x<COLS-botPiece.matrix[0].length+1;x++){let y=0;while(!botCollides(botPiece.matrix,x,y+1))y++;let holes=0;for(let c=0;c<botPiece.matrix[0].length;c++){for(let r=0;r<ROWS;r++)if(botBoard[r][x+c]){holes+=r;break;}}candidates.push({x,y,holes});}
-      candidates.sort((a,b)=> (botDifficulty==="hard"?a.holes-b.holes:Math.abs(a.x-4.5)-Math.abs(b.x-4.5)));const pick=candidates[Math.floor(Math.random()*Math.min(candidates.length,botDifficulty==="hard"?2:4))];if(pick)botPiece.x=pick.x;
+    const choice=chooseBotPlacement();
+    if(!choice){botPiece=null;botGameWon();return;}
+    botPiece.matrix=choice.matrix.map(row=>row.slice());
+    botPiece.x=choice.x;botPiece.y=choice.y;
+    botPiece.matrix.forEach((row,r)=>row.forEach((v,c)=>{
+      if(v)botBoard[botPiece.y+r][botPiece.x+c]=botPiece.type;
+    }));
+    let cleared=0;
+    for(let y=ROWS-1;y>=0;y--)if(botBoard[y].every(Boolean)){botBoard.splice(y,1);botBoard.unshift(Array(COLS).fill(null));cleared++;y++;}
+    botLines+=cleared;
+    botScore+=([0,100,300,500,800][cleared]||0);
+    if(cleared>=2){
+      const attackRows=cleared===2?1:cleared===3?2:4;
+      const overflow=addGarbageRows(board,attackRows);
+      playerGarbageReceived+=attackRows;
+      sound(105,.18,"sawtooth",.055);
+      draw();
+      if(overflow){endGame();return;}
     }
-    if(!botCollides(botPiece.matrix,botPiece.x,botPiece.y+1)){botPiece.y++;return;}
-    botPiece.matrix.forEach((row,r)=>row.forEach((v,c)=>{if(v&&botPiece.y+r>=0)botBoard[botPiece.y+r][botPiece.x+c]=botPiece.type;}));
-    let cleared=0;for(let y=ROWS-1;y>=0;y--)if(botBoard[y].every(Boolean)){botBoard.splice(y,1);botBoard.unshift(Array(COLS).fill(null));cleared++;y++;}
-    botLines+=cleared;botScore+=([0,100,300,500,800][cleared]||0);spawnBotPiece();
+    spawnBotPiece();
+    renderBot();
   }
   function renderBot(){if(!botBoard)return;renderOpponent({board:botBoard,current:botPiece,score:botScore,lines:botLines,alive:!!botPiece});}
+
   function botGameWon(){running=false;gameOver=true;stopMusic(true);$("pauseButton").disabled=true;setOverlay("Victory!","BOT DEFEATED",`You beat the ${botDifficulty} NOVA BOT.`,[{label:"Rematch",action:()=>startBotMatch(botDifficulty)},{label:"Main menu",action:showMainMenu}]);overlay.classList.remove("hidden");sound(880,.2,"triangle",.05);}
 
   function showMainHowToPlay() {
