@@ -386,9 +386,9 @@
   }
   function startBotMatch(levelName) {
     playType="bot"; botDifficulty=levelName;
-    botSpeed=levelName==="easy"?900:levelName==="medium"?720:580;
+    botSpeed=levelName==="easy"?900:levelName==="medium"?720:390;
     botTarget=null; botActionAt=0; botFallAt=0; botQuickDropAt=0; botQuickDropUsed=false; botWillQuickDrop=false;
-    botThinkDelay=levelName==="easy"?420:levelName==="medium"?260:150;
+    botThinkDelay=levelName==="easy"?420:levelName==="medium"?260:65;
     botGarbageSent=0; playerGarbageReceived=0; botCombo=0;
     startGame();
     botBoard=Array.from({length:ROWS},()=>Array(COLS).fill(null)); botPiece=null; botScore=0; botLines=0; botTickAt=0; botTarget=null; botActionAt=0; botFallAt=0;
@@ -422,9 +422,9 @@
     botActionAt=now+botThinkDelay;
     botFallAt=now+botSpeed;
     botQuickDropUsed=false;
-    const quickDropChance=botDifficulty==="easy"?0.18:botDifficulty==="medium"?0.52:0.86;
+    const quickDropChance=botDifficulty==="easy"?0.18:botDifficulty==="medium"?0.52:0.98;
     botWillQuickDrop=Math.random()<quickDropChance;
-    const quickDropReaction=botDifficulty==="easy"?1050:botDifficulty==="medium"?720:480;
+    const quickDropReaction=botDifficulty==="easy"?1050:botDifficulty==="medium"?720:230;
     botQuickDropAt=now+botThinkDelay+quickDropReaction;
   }
   function addGarbageRows(grid,count) {
@@ -443,11 +443,13 @@
     const heights=[];
     let aggregate=0, holes=0, bumpiness=0, maxHeight=0;
     let rowTransitions=0, columnTransitions=0, wells=0, holeDepth=0;
+    let coveredCells=0, nearTop=0;
     for(let x=0;x<COLS;x++){
       let height=0, found=false;
       for(let y=0;y<ROWS;y++){
         if(grid[y][x]){
           if(!found){height=ROWS-y;found=true;}
+          if(found)coveredCells++;
         } else if(found) {
           holes++;
           holeDepth += ROWS-y;
@@ -456,6 +458,7 @@
       heights.push(height);
       aggregate+=height;
       maxHeight=Math.max(maxHeight,height);
+      if(height>=14)nearTop+=(height-13)*(height-13);
     }
     for(let x=0;x<COLS-1;x++) bumpiness+=Math.abs(heights[x]-heights[x+1]);
     for(let y=0;y<ROWS;y++){
@@ -480,15 +483,16 @@
       wells+=depth*(depth+1)/2;
     }
     const weights = botDifficulty==="hard"
-      ? {line:1.02, aggregate:0.52, holes:10.5, holeDepth:0.58, bump:0.70, well:0.42, row:0.40, col:0.52, max:0.92}
+      ? {line:3.7, tetris:22, aggregate:0.46, holes:15.5, holeDepth:0.92, bump:0.72, well:0.30, row:0.46, col:0.68, max:1.35, top:2.8}
       : botDifficulty==="medium"
-      ? {line:0.82, aggregate:0.46, holes:8.6, holeDepth:0.43, bump:0.62, well:0.32, row:0.32, col:0.40, max:0.78}
-      : {line:0.60, aggregate:0.36, holes:6.3, holeDepth:0.26, bump:0.48, well:0.20, row:0.20, col:0.24, max:0.58};
-    return cleared*weights.line*12 - aggregate*weights.aggregate
+      ? {line:1.7, tetris:8, aggregate:0.46, holes:8.6, holeDepth:0.43, bump:0.62, well:0.32, row:0.32, col:0.40, max:0.78, top:1.1}
+      : {line:0.9, tetris:2, aggregate:0.36, holes:6.3, holeDepth:0.26, bump:0.48, well:0.20, row:0.20, col:0.24, max:0.58, top:0.6};
+    const clearReward=cleared*weights.line*12+(cleared===4?weights.tetris*12:0);
+    return clearReward - aggregate*weights.aggregate
       - holes*weights.holes - holeDepth*weights.holeDepth
       - bumpiness*weights.bump - wells*weights.well
       - rowTransitions*weights.row - columnTransitions*weights.col
-      - maxHeight*weights.max;
+      - maxHeight*weights.max - nearTop*weights.top;
   }
 
   function getBotPlacements(grid, matrix, type) {
@@ -535,41 +539,43 @@
     const allTypes=Object.keys(SHAPES);
 
     if(botDifficulty==="medium"){
-      // Medium considers every possible next shape before choosing.
       for(const option of options){
         let total=0;
         for(const type of allTypes){
           const future=getBotPlacements(option.board,SHAPES[type],type);
-          if(future.length){
-            future.sort((a,b)=>b.score-a.score);
-            total+=future[0].score;
-          } else total-=110;
+          if(future.length){future.sort((a,b)=>b.score-a.score);total+=future[0].score;}
+          else total-=160;
         }
-        option.score += (total/allTypes.length)*0.34;
+        option.score += (total/allTypes.length)*0.42;
       }
     } else if(botDifficulty==="hard"){
-      // Hard uses a two-piece beam search with a second-ply safety estimate.
+      // Hard uses a weighted two-ply expectimax search. It values survival first,
+      // then clean multi-line attacks, and rejects moves that create buried holes.
       options.sort((a,b)=>b.score-a.score);
-      const beam=options.slice(0,Math.min(8,options.length));
+      const beam=options.slice(0,Math.min(7,options.length));
       for(const option of beam){
-        let expected=0, samples=0;
+        let expected=0;
         for(const nextType of allTypes){
           const nextMoves=getBotPlacements(option.board,SHAPES[nextType],nextType);
-          if(!nextMoves.length){ expected-=145; samples++; continue; }
+          if(!nextMoves.length){expected-=240;continue;}
           nextMoves.sort((a,b)=>b.score-a.score);
-          const bestNext=nextMoves[0];
-          let followTotal=0;
-          for(const followType of allTypes){
-            const followMoves=getBotPlacements(bestNext.board,SHAPES[followType],followType);
-            if(followMoves.length){
-              followMoves.sort((a,b)=>b.score-a.score);
-              followTotal+=followMoves[0].score;
-            } else followTotal-=125;
+          // Average the best two safe continuations so the bot avoids brittle setups.
+          const finalists=nextMoves.slice(0,Math.min(2,nextMoves.length));
+          let nextValue=0;
+          for(const move of finalists){
+            let thirdTotal=0;
+            for(const thirdType of allTypes){
+              const thirdMoves=getBotPlacements(move.board,SHAPES[thirdType],thirdType);
+              if(thirdMoves.length){
+                thirdMoves.sort((a,b)=>b.score-a.score);
+                thirdTotal+=thirdMoves[0].score;
+              } else thirdTotal-=220;
+            }
+            nextValue += move.score*0.62 + (thirdTotal/allTypes.length)*0.38;
           }
-          expected += bestNext.score*0.72 + (followTotal/allTypes.length)*0.28;
-          samples++;
+          expected += nextValue/finalists.length;
         }
-        option.score += (samples?expected/samples:0)*0.58;
+        option.score += (expected/allTypes.length)*0.72;
       }
     }
 
@@ -582,10 +588,12 @@
       const pool=options.slice(0,Math.min(3,options.length));
       return Math.random()<0.94?options[0]:pool[Math.floor(Math.random()*pool.length)];
     }
+    // Hard never deliberately throws a winning move away; only tiny noise breaks ties.
     const best=options[0].score;
-    const nearBest=options.filter(o=>o.score>=best-Math.max(1.8,Math.abs(best)*0.025)).slice(0,2);
-    return nearBest.length>1 && Math.random()<0.12 ? nearBest[1] : options[0];
+    const nearBest=options.filter(o=>o.score>=best-Math.max(0.35,Math.abs(best)*0.006)).slice(0,2);
+    return nearBest.length>1 && Math.random()<0.035 ? nearBest[1] : options[0];
   }
+
   function botLockPiece(){
     if(!botPiece)return;
     botPiece.matrix.forEach((row,r)=>row.forEach((v,c)=>{
@@ -614,7 +622,7 @@
     if(!botPiece)return;
     if(!botTarget)botTarget=chooseBotPlacement();
     if(!botTarget){botGameWon();return;}
-    const actionDelay=botDifficulty==="easy"?245:botDifficulty==="medium"?175:135;
+    const actionDelay=botDifficulty==="easy"?245:botDifficulty==="medium"?175:72;
     if(now>=botActionAt){
       const same=JSON.stringify(botPiece.matrix)===JSON.stringify(botTarget.matrix);
       if(!same){
