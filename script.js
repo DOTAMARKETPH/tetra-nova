@@ -25,7 +25,10 @@
   let remoteGameOver = false, lastNetworkUpdate = 0, onlineStarting = false;
   let matchmakingChannel = null, matchmakingSession = null, matchmakingActive = false, matchmakingAttempt = "";
   // Add your Supabase project URL and anon/publishable key here to enable Find Match.
-  const MATCHMAKING_CONFIG = { url: "YOUR_SUPABASE_PROJECT_URL", key: "YOUR_SUPABASE_ANON_KEY" };
+  const MATCHMAKING_CONFIG = {
+    url: "https://lfygpkeqkapmymxxmbzh.supabase.co",
+    key: "sb_publishable_LZsiWCn7_WEVTWJQbogjhQ_MbNoPhRN"
+  };
   let matchmakingClient = null;
   const opponentCanvas = $("opponentCanvas"), opponentCtx = opponentCanvas ? opponentCanvas.getContext("2d") : null;
 
@@ -324,6 +327,7 @@
   }
   function showMainMenu() {
     cleanupOnline();
+    $("onlinePanel").hidden = true;
     stopMusic(true);
     cancelAnimationFrame(animationId);
     running = false; paused = false; gameOver = false;
@@ -333,9 +337,21 @@
     $("pauseButton").disabled = true;
     $("pauseButton").innerHTML = "Ⅱ <span>PAUSE</span>";
     setOverlay("Make your move.", "READY WHEN YOU ARE", "Clear lines and build your best run.", [
-      { label: "Start game", action: startGame },
+      { label: "Start game", action: showGameModeMenu },
       { label: "How to play", action: showMainHowToPlay },
       { label: "Settings", action: showSettingsFromMenu }
+    ]);
+    overlay.classList.remove("hidden");
+  }
+  function showGameModeMenu() {
+    setOverlay("Choose your mode.", "SELECT GAME MODE", "How would you like to play TETRA NOVA?", [
+      { label: "Single Player", action: startGame },
+      { label: "Multiplayer", action: () => {
+        overlay.classList.add("hidden");
+        $("onlinePanel").hidden = false;
+        $("onlinePanel").scrollIntoView({ behavior: "smooth", block: "center" });
+      } },
+      { label: "Back", action: showMainMenu }
     ]);
     overlay.classList.remove("hidden");
   }
@@ -348,7 +364,7 @@
       <div class="detail-actions"><button type="button" id="mainDetailsBack">Back</button><button type="button" id="mainDetailsStart">Start</button></div>`;
     setOverlay("How to play", "QUICK GUIDE", "The goal is to clear as many lines as you can.", [], details);
     $("mainDetailsBack").addEventListener("click", showMainMenu);
-    $("mainDetailsStart").addEventListener("click", startGame);
+    $("mainDetailsStart").addEventListener("click", showGameModeMenu);
   }
   function showSettingsFromMenu() {
     const details = `<h3>Settings</h3>
@@ -367,7 +383,7 @@
     $("overlayMusic").addEventListener("change", e => setMusicEnabled(e.target.checked));
     $("musicVolume").addEventListener("input", e => { musicVolume = Number(e.target.value); });
     $("settingsBack").addEventListener("click", showMainMenu);
-    $("settingsStart").addEventListener("click", startGame);
+    $("settingsStart").addEventListener("click", showGameModeMenu);
   }
   function endGame() {
     running=false; paused=false; gameOver=true;
@@ -647,7 +663,6 @@
     peer.on("open",()=>attachConnection(peer.connect(`falling-blocks-${code}`,{reliable:true})));
     peer.on("error",e=>roomStatus(`Could not join room: ${e.type||"check the code"}.`));
   }
-  $("multiplayerButton").addEventListener("click",()=>{$("onlinePanel").hidden=false;$("onlinePanel").scrollIntoView({behavior:"smooth",block:"center"});});
   $("closeOnline").addEventListener("click",()=>{$("onlinePanel").hidden=true;});
   $("findMatchButton").addEventListener("click",startFindMatch);
   $("cancelMatchButton").addEventListener("click",()=>{cleanupOnline();roomStatus("Match search cancelled. You can search again or create a private room.");});
