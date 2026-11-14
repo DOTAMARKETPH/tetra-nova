@@ -23,7 +23,7 @@
   let leaderboard = loadScores();
   let peer = null, onlineConnection = null, onlineRole = null, onlineMatch = false;
   let remoteGameOver = false, lastNetworkUpdate = 0, onlineStarting = false;
-  let playType="endless", botDifficulty="medium", botBoard=null, botPiece=null, botScore=0, botLines=0, botTickAt=0, botSpeed=720, botGarbageSent=0, playerGarbageReceived=0;
+  let playType="endless", botDifficulty="medium", botBoard=null, botPiece=null, botScore=0, botLines=0, botTickAt=0, botSpeed=720, botGarbageSent=0, playerGarbageReceived=0, botCombo=0;
   let botTarget=null, botActionAt=0, botFallAt=0, botThinkDelay=0, botQuickDropAt=0, botQuickDropUsed=false, botWillQuickDrop=false;
   let matchmakingChannel = null, matchmakingSession = null, matchmakingActive = false, matchmakingAttempt = "";
   // Add your Supabase project URL and anon/publishable key here to enable Find Match.
@@ -389,7 +389,7 @@
     botSpeed=levelName==="easy"?900:levelName==="medium"?720:580;
     botTarget=null; botActionAt=0; botFallAt=0; botQuickDropAt=0; botQuickDropUsed=false; botWillQuickDrop=false;
     botThinkDelay=levelName==="easy"?420:levelName==="medium"?260:150;
-    botGarbageSent=0; playerGarbageReceived=0;
+    botGarbageSent=0; playerGarbageReceived=0; botCombo=0;
     startGame();
     botBoard=Array.from({length:ROWS},()=>Array(COLS).fill(null)); botPiece=null; botScore=0; botLines=0; botTickAt=0; botTarget=null; botActionAt=0; botFallAt=0;
     const opponent=$("opponentCard"); opponent.hidden=false;
@@ -480,9 +480,9 @@
       wells+=depth*(depth+1)/2;
     }
     const weights = botDifficulty==="hard"
-      ? {line:0.82, aggregate:0.48, holes:8.2, holeDepth:0.42, bump:0.62, well:0.34, row:0.34, col:0.42, max:0.72}
+      ? {line:1.02, aggregate:0.52, holes:10.5, holeDepth:0.58, bump:0.70, well:0.42, row:0.40, col:0.52, max:0.92}
       : botDifficulty==="medium"
-      ? {line:0.72, aggregate:0.43, holes:7.5, holeDepth:0.36, bump:0.58, well:0.28, row:0.28, col:0.34, max:0.68}
+      ? {line:0.82, aggregate:0.46, holes:8.6, holeDepth:0.43, bump:0.62, well:0.32, row:0.32, col:0.40, max:0.78}
       : {line:0.60, aggregate:0.36, holes:6.3, holeDepth:0.26, bump:0.48, well:0.20, row:0.20, col:0.24, max:0.58};
     return cleared*weights.line*12 - aggregate*weights.aggregate
       - holes*weights.holes - holeDepth*weights.holeDepth
@@ -532,46 +532,59 @@
     if(!botPiece || !botBoard)return null;
     const options=getBotPlacements(botBoard,botPiece.matrix,botPiece.type);
     if(!options.length)return null;
-
-    // One-piece lookahead: test likely next pieces on every candidate board.
-    // Hard evaluates all seven shapes; Medium samples several; Easy stays more forgiving.
     const allTypes=Object.keys(SHAPES);
-    const lookaheadTypes=botDifficulty==="hard"
-      ? allTypes
-      : botDifficulty==="medium"
-      ? ["I","O","T","S","Z"]
-      : [];
-    if(lookaheadTypes.length){
+
+    if(botDifficulty==="medium"){
+      // Medium considers every possible next shape before choosing.
       for(const option of options){
-        let futureTotal=0, futureCount=0;
-        for(const type of lookaheadTypes){
+        let total=0;
+        for(const type of allTypes){
           const future=getBotPlacements(option.board,SHAPES[type],type);
           if(future.length){
             future.sort((a,b)=>b.score-a.score);
-            futureTotal+=future[0].score;
-            futureCount++;
-          } else {
-            futureTotal-=90;
-            futureCount++;
-          }
+            total+=future[0].score;
+          } else total-=110;
         }
-        const futureAverage=futureCount?futureTotal/futureCount:0;
-        option.score += futureAverage*(botDifficulty==="hard"?0.42:0.22);
+        option.score += (total/allTypes.length)*0.34;
+      }
+    } else if(botDifficulty==="hard"){
+      // Hard uses a two-piece beam search with a second-ply safety estimate.
+      options.sort((a,b)=>b.score-a.score);
+      const beam=options.slice(0,Math.min(8,options.length));
+      for(const option of beam){
+        let expected=0, samples=0;
+        for(const nextType of allTypes){
+          const nextMoves=getBotPlacements(option.board,SHAPES[nextType],nextType);
+          if(!nextMoves.length){ expected-=145; samples++; continue; }
+          nextMoves.sort((a,b)=>b.score-a.score);
+          const bestNext=nextMoves[0];
+          let followTotal=0;
+          for(const followType of allTypes){
+            const followMoves=getBotPlacements(bestNext.board,SHAPES[followType],followType);
+            if(followMoves.length){
+              followMoves.sort((a,b)=>b.score-a.score);
+              followTotal+=followMoves[0].score;
+            } else followTotal-=125;
+          }
+          expected += bestNext.score*0.72 + (followTotal/allTypes.length)*0.28;
+          samples++;
+        }
+        option.score += (samples?expected/samples:0)*0.58;
       }
     }
+
     options.sort((a,b)=>b.score-a.score);
     if(botDifficulty==="easy"){
-      // Still playable, but deliberately chooses from a wider set of good moves.
-      const pool=options.slice(0,Math.min(8,options.length));
+      const pool=options.slice(0,Math.min(9,options.length));
       return pool[Math.floor(Math.random()*pool.length)];
     }
     if(botDifficulty==="medium"){
-      // Usually takes a strong move, with occasional variation.
-      const pool=options.slice(0,Math.min(4,options.length));
-      return pool[Math.random()<0.88?0:Math.floor(Math.random()*pool.length)];
+      const pool=options.slice(0,Math.min(3,options.length));
+      return Math.random()<0.94?options[0]:pool[Math.floor(Math.random()*pool.length)];
     }
-    // Hard consistently selects the strongest one-piece lookahead result.
-    return options[0];
+    const best=options[0].score;
+    const nearBest=options.filter(o=>o.score>=best-Math.max(1.8,Math.abs(best)*0.025)).slice(0,2);
+    return nearBest.length>1 && Math.random()<0.12 ? nearBest[1] : options[0];
   }
   function botLockPiece(){
     if(!botPiece)return;
@@ -582,9 +595,12 @@
     for(let y=ROWS-1;y>=0;y--)if(botBoard[y].every(Boolean)){botBoard.splice(y,1);botBoard.unshift(Array(COLS).fill(null));cleared++;y++;}
     botLines+=cleared;
     botScore+=([0,100,300,500,800][cleared]||0);
-    if(cleared>=2){
-      const attackRows=cleared===2?1:cleared===3?2:4;
+    if(cleared>0) botCombo++; else botCombo=0;
+    if(cleared>=2 || (cleared===1 && botCombo>=3)){
+      let attackRows=cleared===2?1:cleared===3?2:cleared>=4?4:1;
+      if(botCombo>=4 && cleared>=2) attackRows++;
       const overflow=addGarbageRows(board,attackRows);
+      botGarbageSent+=attackRows;
       playerGarbageReceived+=attackRows;
       sound(105,.18,"sawtooth",.055);
       draw();
