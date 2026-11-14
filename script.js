@@ -529,7 +529,12 @@
     onlineMatch=false; remoteGameOver=false; onlineStarting=false; onlineRole=null;
     if(onlineConnection){try{onlineConnection.close();}catch{} onlineConnection=null;}
     if(peer){try{peer.destroy();}catch{} peer=null;}
-    $("opponentCard").hidden=true; $("connectionPill").innerHTML="<i></i> LOCAL ARCADE";
+    $("opponentCard").hidden=true;
+    const arena=$("battleArena"), opponent=$("opponentCard"), right=$("rightPanel") || document.querySelector(".right-panel");
+    if(arena && opponent && right && opponent.parentElement===arena) right.prepend(opponent);
+    opponent.classList.remove("battle-player","opponent-battle-player");
+    document.querySelector(".game-layout")?.classList.remove("online-battle");
+    $("connectionPill").innerHTML="<i></i> LOCAL ARCADE";
     $("roomCodeWrap").hidden=true; $("leaveRoomButton").hidden=true;
     if($("cancelMatchButton")) $("cancelMatchButton").hidden=true;
   }
@@ -537,12 +542,12 @@
     if(!opponentCtx||!data)return;
     $("opponentScore").textContent=formatScore(data.score||0); $("opponentLines").textContent=data.lines||0;
     $("opponentStatus").textContent=data.alive===false?"TOPPED OUT":"ONLINE";
-    const c=opponentCtx; c.clearRect(0,0,150,300); c.fillStyle="#080e1a"; c.fillRect(0,0,150,300);
+    const c=opponentCtx, cell=30; c.clearRect(0,0,300,600); c.fillStyle="#080e1a"; c.fillRect(0,0,300,600);
     c.strokeStyle="rgba(130,155,190,.09)";
-    for(let x=0;x<=10;x++){c.beginPath();c.moveTo(x*15+.5,0);c.lineTo(x*15+.5,300);c.stroke();}
-    for(let y=0;y<=20;y++){c.beginPath();c.moveTo(0,y*15+.5);c.lineTo(150,y*15+.5);c.stroke();}
-    (data.board||[]).forEach((row,y)=>row.forEach((type,x)=>{if(type)drawCell(c,x*15,y*15,15,COLORS[type]);}));
-    if(data.current)drawMatrix(c,data.current.matrix,data.current.x*15,data.current.y*15,15,COLORS[data.current.type]);
+    for(let x=0;x<=10;x++){c.beginPath();c.moveTo(x*cell+.5,0);c.lineTo(x*cell+.5,600);c.stroke();}
+    for(let y=0;y<=20;y++){c.beginPath();c.moveTo(0,y*cell+.5);c.lineTo(300,y*cell+.5);c.stroke();}
+    (data.board||[]).forEach((row,y)=>row.forEach((type,x)=>{if(type)drawCell(c,x*cell,y*cell,cell,COLORS[type]);}));
+    if(data.current){let ghostY=data.current.y;while(data.board && ghostY<20 && data.current.matrix.some((r,ry)=>r.some((v,rx)=>v && (ghostY+ry+1>=20 || data.board[ghostY+ry+1]?.[data.current.x+rx]))))break;drawMatrix(c,data.current.matrix,data.current.x*cell,data.current.y*cell,cell,COLORS[data.current.type]);}
   }
   function handleOnlineMessage(data) {
     if(!data||typeof data!=="object")return;
@@ -571,7 +576,11 @@
     onlineConnection=connection;
     connection.on("open",()=>{
       leaveMatchmakingQueue();
-      $("opponentCard").hidden=false; $("connectionPill").innerHTML="<i></i> 1V1 CONNECTED";
+      $("opponentCard").hidden=false;
+      const arena=$("battleArena"), opponent=$("opponentCard");
+      if(arena && opponent && opponent.parentElement!==arena){opponent.classList.add("battle-player","opponent-battle-player");arena.appendChild(opponent);}
+      document.querySelector(".game-layout")?.classList.add("online-battle");
+      $("connectionPill").innerHTML="<i></i> 1V1 CONNECTED";
       $("leaveRoomButton").hidden=false; roomStatus("Friend connected! Starting the match shortly…");
       if(onlineRole==="host"&&!onlineStarting){onlineStarting=true;setTimeout(()=>{sendOnline({type:"start",mode});startOnlineMatch(false);},1200);}
     });
@@ -587,6 +596,9 @@
     onlineMatch=true;remoteGameOver=false;onlineStarting=false;
     if(notify)sendOnline({type:"start",mode});
     startGame();onlineMatch=true;$("pauseButton").disabled=true;$("opponentCard").hidden=false;
+    const arena=$("battleArena"), opponent=$("opponentCard");
+    if(arena && opponent && opponent.parentElement!==arena){opponent.classList.add("battle-player","opponent-battle-player");arena.appendChild(opponent);}
+    document.querySelector(".game-layout")?.classList.add("online-battle");
     roomStatus("Match in progress! Clear 2+ lines to send garbage to your opponent.");
   }
   function matchmakingConfigured() {

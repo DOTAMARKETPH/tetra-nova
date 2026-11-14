@@ -165,3 +165,34 @@ footer span { color:var(--cyan); padding:0 5px; }
 .online-note { color:#718097; font-size:10px; line-height:1.5; margin:12px 0 0; }
 .multiplayer-top-button { width:auto; padding:0 12px; font:10px 'DM Mono',monospace; letter-spacing:.08em; }
 @media(max-width:560px) { .online-panel { padding:15px; } .online-actions { grid-template-columns:1fr; } .join-room { grid-column:auto; } .room-code-wrap { flex-wrap:wrap; } .room-code-wrap span { width:100%; } .top-actions { gap:7px; } .multiplayer-top-button { padding:0 8px; font-size:9px; } }
+
+
+/* Side-by-side live 1v1 battle arena */
+.battle-arena { display:block; }
+.battle-player-heading { display:flex; justify-content:space-between; align-items:center; margin:0 0 9px; color:var(--cyan); font:700 11px 'DM Mono',monospace; letter-spacing:.14em; }
+.battle-player-heading small { color:#718097; font-size:9px; }
+.opponent-battle-player { width:300px; min-width:300px; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; }
+.opponent-battle-player .panel-heading { margin:0 0 9px; color:#c5a6ff; font:700 11px 'DM Mono',monospace; letter-spacing:.14em; }
+.opponent-battle-player #opponentCanvas { display:block; width:300px; height:600px; border:1px solid #7956b7; border-radius:9px; background:#080e1a; box-shadow:0 0 0 5px #211936,0 20px 50px #0008,0 0 35px #a78bfa18; }
+.opponent-battle-player .opponent-stats { display:flex; justify-content:space-between; margin-top:10px; color:#9e91bd; font:9px 'DM Mono',monospace; }
+.opponent-battle-player .opponent-stats b { color:#eadfff; }
+.online-battle { grid-template-columns:minmax(145px,180px) minmax(0, 1fr); max-width:1120px; gap:18px; }
+.online-battle .board-column { width:auto; min-width:0; }
+.online-battle .right-panel { display:none; }
+.online-battle .battle-arena { display:grid; grid-template-columns:repeat(2,minmax(0,300px)); gap:22px; align-items:start; justify-content:center; }
+.online-battle .battle-player { min-width:0; }
+.online-battle .battle-player .board-frame { width:300px; height:600px; }
+.online-battle .board-footer { justify-content:center; }
+@media(max-width:900px) {
+  .online-battle { grid-template-columns:1fr; }
+  .online-battle .left-panel { display:none; }
+  .online-battle .battle-arena { overflow-x:auto; justify-content:start; padding:8px 8px 16px; }
+  .online-battle .board-column { width:100%; }
+}
+@media(max-width:560px) {
+  .online-battle .battle-arena { display:flex; gap:16px; width:100%; overflow-x:auto; scroll-snap-type:x mandatory; }
+  .online-battle .battle-player { flex:0 0 260px; width:260px; scroll-snap-align:center; }
+  .online-battle .battle-player .board-frame { width:260px; height:520px; }
+  .online-battle #gameCanvas { width:260px; height:520px; }
+  .online-battle .opponent-battle-player #opponentCanvas { width:260px; height:520px; }
+}

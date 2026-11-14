@@ -66,7 +66,10 @@
             <span class="board-toolbar-label">GAME BOARD</span>
             <button class="pause-button" id="pauseButton" type="button" aria-label="Pause game" disabled>Ⅱ <span>PAUSE</span></button>
           </div>
-          <div class="board-frame">
+          <div class="battle-arena" id="battleArena">
+            <section class="battle-player local-battle-player">
+              <div class="battle-player-heading"><span>YOU</span><small>PLAYER 1</small></div>
+              <div class="board-frame">
             <canvas id="gameCanvas" width="300" height="600" aria-label="Game board"></canvas>
             <div class="board-overlay" id="overlay">
               <div class="overlay-card">
@@ -80,6 +83,8 @@
                 <div class="overlay-details" id="overlayDetails" hidden></div>
               </div>
             </div>
+              </div>
+            </section>
           </div>
           <div class="board-footer">
             <span><kbd>←</kbd><kbd>→</kbd> MOVE</span>
@@ -90,7 +95,7 @@
         </div>
 
         <aside class="side-panel right-panel">
-          <div class="panel-card opponent-card" id="opponentCard" hidden><div class="panel-heading"><span>OPPONENT</span><small id="opponentStatus">WAITING</small></div><canvas id="opponentCanvas" width="150" height="300" aria-label="Opponent game board"></canvas><div class="opponent-stats"><span>SCORE <b id="opponentScore">000000</b></span><span>LINES <b id="opponentLines">0</b></span></div></div>
+          <div class="panel-card opponent-card" id="opponentCard" hidden><div class="panel-heading"><span>OPPONENT</span><small id="opponentStatus">WAITING</small></div><canvas id="opponentCanvas" width="300" height="600" aria-label="Opponent game board"></canvas><div class="opponent-stats"><span>SCORE <b id="opponentScore">000000</b></span><span>LINES <b id="opponentLines">0</b></span></div></div>
           <div class="panel-card">
             <div class="panel-heading"><span>NEXT</span><small>UPCOMING</small></div>
             <div class="preview-wrap next-preview"><canvas id="nextCanvas" width="144" height="300" aria-label="Next pieces"></canvas></div>
