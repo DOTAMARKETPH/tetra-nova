@@ -25,7 +25,12 @@
   let remoteGameOver = false, lastNetworkUpdate = 0, onlineStarting = false;
   let matchmakingChannel = null, matchmakingSession = null, matchmakingActive = false, matchmakingAttempt = "";
   // Add your Supabase project URL and anon/publishable key here to enable Find Match.
-  const MATCHMAKING_CONFIG = { url: "YOUR_SUPABASE_PROJECT_URL", key: "YOUR_SUPABASE_ANON_KEY" };
+  
+const MATCHMAKING_CONFIG = {
+  url: "https://lfygpkeqkapmymxxmbzh.supabase.co",
+  key: "sb_publishable_LZsiWCn7_WEVTWJQbogjhQ_MbNoPhRN"
+};
+
   let matchmakingClient = null;
   const opponentCanvas = $("opponentCanvas"), opponentCtx = opponentCanvas ? opponentCanvas.getContext("2d") : null;
 
