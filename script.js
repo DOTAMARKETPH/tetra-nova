@@ -432,66 +432,140 @@
     }
     return overflow;
   }
-  function evaluateBotBoard(grid,cleared) {
-    const heights=[],holesByColumn=[];
-    let aggregate=0,holes=0,bumpiness=0,maxHeight=0;
+  // Board evaluator: rewards clean line clears and penalizes holes, rough surfaces,
+  // deep wells and blocked-in cells. Higher scores are better.
+  function evaluateBotBoard(grid, cleared=0) {
+    const heights=[];
+    let aggregate=0, holes=0, bumpiness=0, maxHeight=0;
+    let rowTransitions=0, columnTransitions=0, wells=0, holeDepth=0;
     for(let x=0;x<COLS;x++){
-      let height=0,found=false,columnHoles=0;
+      let height=0, found=false;
       for(let y=0;y<ROWS;y++){
         if(grid[y][x]){
           if(!found){height=ROWS-y;found=true;}
-        } else if(found) columnHoles++;
+        } else if(found) {
+          holes++;
+          holeDepth += ROWS-y;
+        }
       }
-      heights.push(height); holesByColumn.push(columnHoles);
-      aggregate+=height;holes+=columnHoles;maxHeight=Math.max(maxHeight,height);
+      heights.push(height);
+      aggregate+=height;
+      maxHeight=Math.max(maxHeight,height);
     }
-    for(let x=0;x<COLS-1;x++)bumpiness+=Math.abs(heights[x]-heights[x+1]);
-    let wells=0;
+    for(let x=0;x<COLS-1;x++) bumpiness+=Math.abs(heights[x]-heights[x+1]);
+    for(let y=0;y<ROWS;y++){
+      let previous=1;
+      for(let x=0;x<COLS;x++){
+        const filled=grid[y][x]?1:0;
+        if(filled!==previous)rowTransitions++;
+        previous=filled;
+      }
+      if(previous===0)rowTransitions++;
+    }
     for(let x=0;x<COLS;x++){
-      const left=x===0?ROWS:heights[x-1],right=x===COLS-1?ROWS:heights[x+1];
-      wells+=Math.max(0,Math.min(left,right)-heights[x]);
+      let previous=1;
+      for(let y=0;y<ROWS;y++){
+        const filled=grid[y][x]?1:0;
+        if(filled!==previous)columnTransitions++;
+        previous=filled;
+      }
+      if(previous===0)columnTransitions++;
+      const left=x===0?ROWS:heights[x-1], right=x===COLS-1?ROWS:heights[x+1];
+      const depth=Math.max(0,Math.min(left,right)-heights[x]);
+      wells+=depth*(depth+1)/2;
     }
-    const weights=botDifficulty==="hard"
-      ? {lines:5.8,holes:9.5,height:1.05,aggregate:.48,bump:.72,wells:.38}
+    const weights = botDifficulty==="hard"
+      ? {line:0.82, aggregate:0.48, holes:8.2, holeDepth:0.42, bump:0.62, well:0.34, row:0.34, col:0.42, max:0.72}
       : botDifficulty==="medium"
-      ? {lines:4.4,holes:7.4,height:.92,aggregate:.38,bump:.55,wells:.25}
-      : {lines:3.2,holes:5.2,height:.72,aggregate:.28,bump:.35,wells:.12};
-    return -cleared*weights.lines*10 - holes*weights.holes - maxHeight*weights.height
-      - aggregate*weights.aggregate - bumpiness*weights.bump - wells*weights.wells;
+      ? {line:0.72, aggregate:0.43, holes:7.5, holeDepth:0.36, bump:0.58, well:0.28, row:0.28, col:0.34, max:0.68}
+      : {line:0.60, aggregate:0.36, holes:6.3, holeDepth:0.26, bump:0.48, well:0.20, row:0.20, col:0.24, max:0.58};
+    return cleared*weights.line*12 - aggregate*weights.aggregate
+      - holes*weights.holes - holeDepth*weights.holeDepth
+      - bumpiness*weights.bump - wells*weights.well
+      - rowTransitions*weights.row - columnTransitions*weights.col
+      - maxHeight*weights.max;
   }
-  function chooseBotPlacement() {
-    const options=[];
-    let matrix=botPiece.matrix.map(row=>row.slice());
-    const rotations=[];
+
+  function getBotPlacements(grid, matrix, type) {
+    const options=[], rotations=[];
+    let shape=matrix.map(row=>row.slice());
     for(let r=0;r<4;r++){
-      if(!rotations.some(old=>JSON.stringify(old)===JSON.stringify(matrix)))rotations.push(matrix);
-      matrix=rotateBotMatrix(matrix);
+      if(!rotations.some(old=>JSON.stringify(old)===JSON.stringify(shape)))rotations.push(shape);
+      shape=rotateBotMatrix(shape);
     }
-    for(const shape of rotations){
-      const width=shape[0].length;
+    for(const rotated of rotations){
+      const width=rotated[0].length;
       for(let x=0;x<=COLS-width;x++){
         let y=0;
-        while(!botCollides(shape,x,y+1))y++;
-        if(botCollides(shape,x,y))continue;
-        const test=botBoard.map(row=>row.slice());
-        shape.forEach((row,ry)=>row.forEach((v,c)=>{if(v)test[y+ry][x+c]=botPiece.type;}));
+        while(!botCollides(rotated,x,y+1,grid))y++;
+        if(botCollides(rotated,x,y,grid))continue;
+        const test=grid.map(row=>row.slice());
+        rotated.forEach((row,ry)=>row.forEach((v,c)=>{
+          if(v && y+ry>=0)test[y+ry][x+c]=type;
+        }));
         let cleared=0;
-        for(let yy=ROWS-1;yy>=0;yy--)if(test[yy].every(Boolean)){test.splice(yy,1);test.unshift(Array(COLS).fill(null));cleared++;yy++;}
-        options.push({matrix:shape,x,y,cleared,score:evaluateBotBoard(test,cleared)});
+        for(let yy=ROWS-1;yy>=0;yy--){
+          if(test[yy].every(Boolean)){
+            test.splice(yy,1);
+            test.unshift(Array(COLS).fill(null));
+            cleared++;
+            yy++;
+          }
+        }
+        // Prefer placements that land smoothly and leave room for future pieces.
+        const landingHeight=ROWS-y;
+        options.push({
+          matrix:rotated.map(row=>row.slice()), x, y, cleared, board:test,
+          score:evaluateBotBoard(test,cleared)-landingHeight*0.035
+        });
       }
     }
+    return options;
+  }
+
+  function chooseBotPlacement() {
+    if(!botPiece || !botBoard)return null;
+    const options=getBotPlacements(botBoard,botPiece.matrix,botPiece.type);
     if(!options.length)return null;
+
+    // One-piece lookahead: test likely next pieces on every candidate board.
+    // Hard evaluates all seven shapes; Medium samples several; Easy stays more forgiving.
+    const allTypes=Object.keys(SHAPES);
+    const lookaheadTypes=botDifficulty==="hard"
+      ? allTypes
+      : botDifficulty==="medium"
+      ? ["I","O","T","S","Z"]
+      : [];
+    if(lookaheadTypes.length){
+      for(const option of options){
+        let futureTotal=0, futureCount=0;
+        for(const type of lookaheadTypes){
+          const future=getBotPlacements(option.board,SHAPES[type],type);
+          if(future.length){
+            future.sort((a,b)=>b.score-a.score);
+            futureTotal+=future[0].score;
+            futureCount++;
+          } else {
+            futureTotal-=90;
+            futureCount++;
+          }
+        }
+        const futureAverage=futureCount?futureTotal/futureCount:0;
+        option.score += futureAverage*(botDifficulty==="hard"?0.42:0.22);
+      }
+    }
     options.sort((a,b)=>b.score-a.score);
     if(botDifficulty==="easy"){
-      // Easy still makes sensible plays, but occasionally chooses a weaker placement.
-      const pool=options.slice(0,Math.min(7,options.length));
+      // Still playable, but deliberately chooses from a wider set of good moves.
+      const pool=options.slice(0,Math.min(8,options.length));
       return pool[Math.floor(Math.random()*pool.length)];
     }
     if(botDifficulty==="medium"){
-      const pool=options.slice(0,Math.min(3,options.length));
-      return pool[Math.random()<.82?0:Math.floor(Math.random()*pool.length)];
+      // Usually takes a strong move, with occasional variation.
+      const pool=options.slice(0,Math.min(4,options.length));
+      return pool[Math.random()<0.88?0:Math.floor(Math.random()*pool.length)];
     }
-    // Hard consistently chooses the best board outcome and gets a faster turn cadence.
+    // Hard consistently selects the strongest one-piece lookahead result.
     return options[0];
   }
   function botLockPiece(){
