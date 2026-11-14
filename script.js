@@ -466,10 +466,8 @@
     const interval=Math.max(75, 850-(level-1)*65-(mode==="modern"?70:0));
     if (dropCounter>interval) { move(0,1); dropCounter=0; }
     draw();
-    if (onlineMatch && time-lastNetworkUpdate>120) {
-      lastNetworkUpdate=time;
-      sendOnline({type:"state",board,current:current?{type:current.type,matrix:current.matrix,x:current.x,y:current.y}:null,score,lines,level,alive:true});
-    }
+    // Live board updates are broadcast from draw() so keyboard/touch moves and
+    // gravity drops both publish immediately, not only on the timed game loop.
     animationId=requestAnimationFrame(update);
   }
   function drawCell(context,x,y,size,color,ghost=false) {
@@ -498,6 +496,7 @@
       drawMatrix(ctx,current.matrix,current.x*BLOCK,ghostY*BLOCK,BLOCK,COLORS[current.type],true);
       drawMatrix(ctx,current.matrix,current.x*BLOCK,current.y*BLOCK,BLOCK,COLORS[current.type]);
     }
+    broadcastGameState();
   }
   function drawPreview(context,pieces,heldPiece=false) {
     context.clearRect(0,0,context.canvas.width,context.canvas.height);
@@ -519,8 +518,25 @@
     drawPreview(holdCtx,held,true);
     drawPreview(nextCtx,queue,false);
   }
+  function broadcastGameState(force=false) {
+    if (!onlineMatch || !onlineConnection || !onlineConnection.open || !board) return;
+    const now=Date.now();
+    // Cap traffic while keeping remote pieces visibly responsive.
+    if (!force && now-lastNetworkUpdate<85) return;
+    lastNetworkUpdate=now;
+    const snapshot={
+      type:"state",
+      board:board.map(row=>row.slice()),
+      current:current?{type:current.type,matrix:current.matrix.map(row=>row.slice()),x:current.x,y:current.y}:null,
+      score,lines,level,alive:true, sentAt:now
+    };
+    sendOnline(snapshot);
+  }
   function sendOnline(message) {
-    if (onlineConnection && onlineConnection.open) { try { onlineConnection.send(message); } catch (e) { console.warn("Online send failed",e); } }
+    if (onlineConnection && onlineConnection.open) {
+      try { onlineConnection.send(message); }
+      catch (e) { console.warn("Online send failed",e); roomStatus("Live sync interrupted. Reconnecting…"); }
+    }
   }
   function roomStatus(message) { $("roomStatus").textContent=message; }
   function cleanupOnline() {
@@ -541,7 +557,7 @@
   function renderOpponent(data) {
     if(!opponentCtx||!data)return;
     $("opponentScore").textContent=formatScore(data.score||0); $("opponentLines").textContent=data.lines||0;
-    $("opponentStatus").textContent=data.alive===false?"TOPPED OUT":"ONLINE";
+    $("opponentStatus").textContent=data.alive===false?"TOPPED OUT":"LIVE";
     const c=opponentCtx, cell=30; c.clearRect(0,0,300,600); c.fillStyle="#080e1a"; c.fillRect(0,0,300,600);
     c.strokeStyle="rgba(130,155,190,.09)";
     for(let x=0;x<=10;x++){c.beginPath();c.moveTo(x*cell+.5,0);c.lineTo(x*cell+.5,600);c.stroke();}
@@ -581,6 +597,7 @@
       if(arena && opponent && opponent.parentElement!==arena){opponent.classList.add("battle-player","opponent-battle-player");arena.appendChild(opponent);}
       document.querySelector(".game-layout")?.classList.add("online-battle");
       $("connectionPill").innerHTML="<i></i> 1V1 CONNECTED";
+      $("opponentStatus").textContent="SYNCING…";
       $("leaveRoomButton").hidden=false; roomStatus("Friend connected! Starting the match shortly…");
       if(onlineRole==="host"&&!onlineStarting){onlineStarting=true;setTimeout(()=>{sendOnline({type:"start",mode});startOnlineMatch(false);},1200);}
     });
@@ -600,6 +617,7 @@
     if(arena && opponent && opponent.parentElement!==arena){opponent.classList.add("battle-player","opponent-battle-player");arena.appendChild(opponent);}
     document.querySelector(".game-layout")?.classList.add("online-battle");
     roomStatus("Match in progress! Clear 2+ lines to send garbage to your opponent.");
+    broadcastGameState(true);
   }
   function matchmakingConfigured() {
     return window.supabase && MATCHMAKING_CONFIG.url.startsWith("https://") &&
