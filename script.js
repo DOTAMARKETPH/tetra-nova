@@ -24,7 +24,7 @@
   let peer = null, onlineConnection = null, onlineRole = null, onlineMatch = false;
   let remoteGameOver = false, lastNetworkUpdate = 0, onlineStarting = false;
   let playType="endless", botDifficulty="medium", botBoard=null, botPiece=null, botScore=0, botLines=0, botTickAt=0, botSpeed=720, botGarbageSent=0, playerGarbageReceived=0;
-  let botTarget=null, botActionAt=0, botFallAt=0, botThinkDelay=0;
+  let botTarget=null, botActionAt=0, botFallAt=0, botThinkDelay=0, botQuickDropAt=0, botQuickDropUsed=false, botWillQuickDrop=false;
   let matchmakingChannel = null, matchmakingSession = null, matchmakingActive = false, matchmakingAttempt = "";
   // Add your Supabase project URL and anon/publishable key here to enable Find Match.
   const MATCHMAKING_CONFIG = {
@@ -387,7 +387,7 @@
   function startBotMatch(levelName) {
     playType="bot"; botDifficulty=levelName;
     botSpeed=levelName==="easy"?900:levelName==="medium"?720:580;
-    botTarget=null; botActionAt=0; botFallAt=0;
+    botTarget=null; botActionAt=0; botFallAt=0; botQuickDropAt=0; botQuickDropUsed=false; botWillQuickDrop=false;
     botThinkDelay=levelName==="easy"?420:levelName==="medium"?260:150;
     botGarbageSent=0; playerGarbageReceived=0;
     startGame();
@@ -421,6 +421,11 @@
     const now=performance.now();
     botActionAt=now+botThinkDelay;
     botFallAt=now+botSpeed;
+    botQuickDropUsed=false;
+    const quickDropChance=botDifficulty==="easy"?0.18:botDifficulty==="medium"?0.52:0.86;
+    botWillQuickDrop=Math.random()<quickDropChance;
+    const quickDropReaction=botDifficulty==="easy"?1050:botDifficulty==="medium"?720:480;
+    botQuickDropAt=now+botThinkDelay+quickDropReaction;
   }
   function addGarbageRows(grid,count) {
     let overflow=false;
@@ -593,7 +598,7 @@
     if(!botPiece)return;
     if(!botTarget)botTarget=chooseBotPlacement();
     if(!botTarget){botGameWon();return;}
-    const actionDelay=botDifficulty==="easy"?205:botDifficulty==="medium"?145:105;
+    const actionDelay=botDifficulty==="easy"?245:botDifficulty==="medium"?175:135;
     if(now>=botActionAt){
       const same=JSON.stringify(botPiece.matrix)===JSON.stringify(botTarget.matrix);
       if(!same){
@@ -605,7 +610,10 @@
             botPiece.matrix=rotated;botPiece.x+=kick;moved=true;break;
           }
         }
-        if(!moved){botTarget={...botTarget,matrix:botPiece.matrix.map(r=>r.slice()),x:Math.max(0,Math.min(COLS-botPiece.matrix[0].length,botTarget.x))};}
+        if(!moved){
+          botTarget={...botTarget,matrix:botPiece.matrix.map(r=>r.slice()),
+            x:Math.max(0,Math.min(COLS-botPiece.matrix[0].length,botTarget.x))};
+        }
       } else if(botPiece.x!==botTarget.x){
         const direction=Math.sign(botTarget.x-botPiece.x);
         if(!botCollides(botPiece.matrix,botPiece.x+direction,botPiece.y))botPiece.x+=direction;
@@ -613,8 +621,20 @@
       botActionAt=now+actionDelay;
       renderBot();
     }
+
+    const aligned=botPiece.x===botTarget.x &&
+      JSON.stringify(botPiece.matrix)===JSON.stringify(botTarget.matrix);
+
+    // Quick drop is a deliberate player-like action, not an instant drop on spawn.
+    // Each piece gets one chance after the bot has aimed and reacted.
+    if(aligned && botWillQuickDrop && !botQuickDropUsed && now>=botQuickDropAt){
+      botQuickDropUsed=true;
+      while(!botCollides(botPiece.matrix,botPiece.x,botPiece.y+1))botPiece.y++;
+      botLockPiece();
+      return;
+    }
+
     if(now>=botFallAt){
-      const aligned=botPiece.x===botTarget.x && JSON.stringify(botPiece.matrix)===JSON.stringify(botTarget.matrix);
       if(aligned && botPiece.y>=botTarget.y){
         botLockPiece();
       } else if(!botCollides(botPiece.matrix,botPiece.x,botPiece.y+1)){

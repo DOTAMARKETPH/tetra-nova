@@ -19,3 +19,4 @@ Files to replace in the root of the GitHub repository:
 - script.js
 
 The update preserves the existing menus, battle layout, music, settings, and online multiplayer code. JavaScript syntax and ZIP integrity were checked. Please test the actual gameplay in a browser after deploying.
+\n\nQUICK-DROP + SMARTER AI UPDATE\n- Bots now sometimes use a hard/quick drop after aiming and reacting, like a human pressing the hard-drop key.\n- Easy quick-drops occasionally, Medium uses them regularly, and Hard uses them frequently.\n- Quick-drop only happens after the bot aligns its piece with its selected landing position; it does not instantly drop at spawn.\n- Existing board evaluation and next-piece lookahead remain in place for smarter placements.\n
