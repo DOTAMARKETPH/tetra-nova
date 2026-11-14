@@ -23,6 +23,7 @@
   let leaderboard = loadScores();
   let peer = null, onlineConnection = null, onlineRole = null, onlineMatch = false;
   let remoteGameOver = false, lastNetworkUpdate = 0, onlineStarting = false;
+  let playType="endless", botDifficulty="medium", botBoard=null, botPiece=null, botScore=0, botLines=0, botTickAt=0, botSpeed=620;
   let matchmakingChannel = null, matchmakingSession = null, matchmakingActive = false, matchmakingAttempt = "";
   // Add your Supabase project URL and anon/publishable key here to enable Find Match.
   const MATCHMAKING_CONFIG = {
@@ -327,6 +328,7 @@
   }
   function showMainMenu() {
     cleanupOnline();
+    playType="endless"; botBoard=null; botPiece=null;
     $("onlinePanel").hidden = true;
     stopMusic(true);
     cancelAnimationFrame(animationId);
@@ -345,7 +347,7 @@
   }
   function showGameModeMenu() {
     setOverlay("Choose your mode.", "SELECT GAME MODE", "How would you like to play TETRA NOVA?", [
-      { label: "Single Player", action: startGame },
+      { label: "Single Player", action: showSinglePlayerMenu },
       { label: "Multiplayer", action: () => {
         overlay.classList.add("hidden");
         $("onlinePanel").hidden = false;
@@ -355,6 +357,55 @@
     ]);
     overlay.classList.remove("hidden");
   }
+
+  function showSinglePlayerMenu() {
+    setOverlay("Choose your challenge.", "SINGLE PLAYER", "Play against a bot or survive an endless run.", [
+      {label:"Bot Match",action:showBotDifficultyMenu},
+      {label:"Endless",action:()=>{playType="endless";startGame();}},
+      {label:"Back",action:showGameModeMenu}
+    ]); overlay.classList.remove("hidden");
+  }
+  function showBotDifficultyMenu() {
+    setOverlay("Choose difficulty.", "BOT MATCH", "The bot's speed and stacking skill increase with difficulty.", [
+      {label:"Easy",action:()=>startBotMatch("easy")},
+      {label:"Medium",action:()=>startBotMatch("medium")},
+      {label:"Hard",action:()=>startBotMatch("hard")},
+      {label:"Back",action:showSinglePlayerMenu}
+    ]); overlay.classList.remove("hidden");
+  }
+  function startBotMatch(levelName) {
+    playType="bot"; botDifficulty=levelName;
+    botSpeed=levelName==="easy"?850:levelName==="medium"?560:340;
+    startGame();
+    botBoard=Array.from({length:ROWS},()=>Array(COLS).fill(null)); botPiece=null; botScore=0; botLines=0; botTickAt=0;
+    const opponent=$("opponentCard"); opponent.hidden=false;
+    const arena=$("battleArena"); if(opponent.parentElement!==arena){opponent.classList.add("battle-player","opponent-battle-player");arena.appendChild(opponent);}
+    $("game-layout")?.classList.add("online-battle");
+    document.querySelector(".game-layout")?.classList.add("online-battle");
+    $("opponentStatus").textContent=levelName.toUpperCase()+" BOT";
+    $("opponentCard").querySelector(".panel-heading span").textContent="NOVA BOT";
+    spawnBotPiece(); renderBot();
+  }
+  function botCollides(m,x,y) {
+    for(let r=0;r<m.length;r++)for(let c=0;c<m[r].length;c++)if(m[r][c]){const xx=x+c,yy=y+r;if(xx<0||xx>=COLS||yy>=ROWS||(yy>=0&&botBoard[yy][xx]))return true;}
+    return false;
+  }
+  function spawnBotPiece(){const keys=Object.keys(SHAPES),type=keys[Math.floor(Math.random()*keys.length)],matrix=SHAPES[type].map(r=>r.slice());botPiece={type,matrix,x:Math.floor(COLS/2)-Math.ceil(matrix[0].length/2),y:0};if(botCollides(matrix,botPiece.x,0)){botPiece=null;botGameWon();}}
+  function botStep(){
+    if(!botPiece)return;
+    // The bot evaluates a few legal horizontal placements and prefers lower, flatter stacks.
+    if(Math.random()<(botDifficulty==="easy"?.35:botDifficulty==="medium"?.72:.94)){
+      const candidates=[];for(let x=0;x<COLS-botPiece.matrix[0].length+1;x++){let y=0;while(!botCollides(botPiece.matrix,x,y+1))y++;let holes=0;for(let c=0;c<botPiece.matrix[0].length;c++){for(let r=0;r<ROWS;r++)if(botBoard[r][x+c]){holes+=r;break;}}candidates.push({x,y,holes});}
+      candidates.sort((a,b)=> (botDifficulty==="hard"?a.holes-b.holes:Math.abs(a.x-4.5)-Math.abs(b.x-4.5)));const pick=candidates[Math.floor(Math.random()*Math.min(candidates.length,botDifficulty==="hard"?2:4))];if(pick)botPiece.x=pick.x;
+    }
+    if(!botCollides(botPiece.matrix,botPiece.x,botPiece.y+1)){botPiece.y++;return;}
+    botPiece.matrix.forEach((row,r)=>row.forEach((v,c)=>{if(v&&botPiece.y+r>=0)botBoard[botPiece.y+r][botPiece.x+c]=botPiece.type;}));
+    let cleared=0;for(let y=ROWS-1;y>=0;y--)if(botBoard[y].every(Boolean)){botBoard.splice(y,1);botBoard.unshift(Array(COLS).fill(null));cleared++;y++;}
+    botLines+=cleared;botScore+=([0,100,300,500,800][cleared]||0);spawnBotPiece();
+  }
+  function renderBot(){if(!botBoard)return;renderOpponent({board:botBoard,current:botPiece,score:botScore,lines:botLines,alive:!!botPiece});}
+  function botGameWon(){running=false;gameOver=true;stopMusic(true);$("pauseButton").disabled=true;setOverlay("Victory!","BOT DEFEATED",`You beat the ${botDifficulty} NOVA BOT.`,[{label:"Rematch",action:()=>startBotMatch(botDifficulty)},{label:"Main menu",action:showMainMenu}]);overlay.classList.remove("hidden");sound(880,.2,"triangle",.05);}
+
   function showMainHowToPlay() {
     const details = `<h3>How to play</h3>
       <p><b>← / →</b> Move · <b>↑</b> Rotate</p>
@@ -388,6 +439,9 @@
   function endGame() {
     running=false; paused=false; gameOver=true;
     stopMusic(true);
+    if (playType==="bot") {
+      setOverlay("Defeat.","BOT MATCH COMPLETE",`The ${botDifficulty} NOVA BOT wins. You scored ${formatScore(score)}.`,[{label:"Try again",action:()=>startBotMatch(botDifficulty)},{label:"Main menu",action:showMainMenu}]);overlay.classList.remove("hidden");sound(150,.35,"sawtooth",.04);startMusic(4);return;
+    }
     if (onlineMatch) {
       sendOnline({ type:"gameover", score, lines });
       $("pauseButton").disabled = true;
@@ -465,6 +519,7 @@
     const delta=lastTime ? time-lastTime : 0; lastTime=time; dropCounter+=delta;
     const interval=Math.max(75, 850-(level-1)*65-(mode==="modern"?70:0));
     if (dropCounter>interval) { move(0,1); dropCounter=0; }
+    if(playType==="bot" && time-botTickAt>botSpeed){botTickAt=time;botStep();renderBot();}
     draw();
     // Live board updates are broadcast from draw() so keyboard/touch moves and
     // gravity drops both publish immediately, not only on the timed game loop.
@@ -710,7 +765,7 @@
       $("overlayText").textContent=mode==="classic"?"Classic mode: traditional scoring and steady progression.":"Modern mode: faster falling and bonus points.";
     }
   }
-  $("startButton").addEventListener("click",()=>{ if(paused) togglePause(); else startGame(); });
+  $("startButton").addEventListener("click",()=>{ if(paused) togglePause(); else showGameModeMenu(); });
   $("pauseButton").addEventListener("click", togglePause);
   document.querySelectorAll(".mode-button").forEach(btn=>btn.addEventListener("click",()=>setMode(btn.dataset.mode)));
   $("soundToggle").addEventListener("click",()=>{
